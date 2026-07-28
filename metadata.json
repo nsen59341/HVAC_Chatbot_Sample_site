@@ -1,0 +1,8 @@
+{
+  "name": "King HVAC",
+  "description": "Admin dashboard web app for FrontDesk to manage HVAC customers, conversations and appointment booking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
