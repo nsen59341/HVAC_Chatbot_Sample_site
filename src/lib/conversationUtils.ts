@@ -58,9 +58,21 @@ export function normalizeTranscript(raw: any): TranscriptMessage[] {
   return ensureWelcomeMessages(parsedMsgs);
 }
 
+export function getValidCustomerId(conv: any): string {
+  if (!conv) return 'CUST-1001';
+  const custId = conv.customer_id ?? conv.customerId ?? conv.customer_ID ?? conv.phone ?? conv.customer_name ?? conv.visitor_id ?? conv.id;
+  if (custId !== null && custId !== undefined) {
+    const str = String(custId).trim();
+    if (str !== '' && str.toLowerCase() !== 'null' && str.toLowerCase() !== 'undefined') {
+      return str;
+    }
+  }
+  return `CUST-${conv.id || Math.floor(Math.random() * 9000 + 1000)}`;
+}
+
 /**
  * Groups conversation records based on customer_id.
- * If customer_id is null, undefined, or empty, the conversation is excluded.
+ * Safe fallback guarantees no conversation is excluded.
  */
 export function groupConversations(
   rawConversations: Conversation[],
@@ -68,21 +80,11 @@ export function groupConversations(
 ): MergedConversation[] {
   if (!rawConversations || rawConversations.length === 0) return [];
 
-  // Filter out any conversation where customer_id is null/undefined/empty string/"null"
-  const validConvs = rawConversations.filter((conv) => {
-    const custId = conv.customer_id ?? (conv as any).customerId ?? (conv as any).customer_ID;
-    if (custId === null || custId === undefined) return false;
-    const str = String(custId).trim();
-    return str !== '' && str.toLowerCase() !== 'null' && str.toLowerCase() !== 'undefined';
-  });
-
-  if (validConvs.length === 0) return [];
-
-  // Group by customer_id
+  // Group by customer_id (with safe fallback)
   const customerMap = new Map<string, Conversation[]>();
 
-  validConvs.forEach((conv) => {
-    const custId = String(conv.customer_id ?? (conv as any).customerId ?? (conv as any).customer_ID).trim();
+  rawConversations.forEach((conv) => {
+    const custId = getValidCustomerId(conv);
     if (!customerMap.has(custId)) {
       customerMap.set(custId, []);
     }

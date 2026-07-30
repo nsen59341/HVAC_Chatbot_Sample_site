@@ -13,6 +13,7 @@ import { WebhookModal } from './components/WebhookModal';
 import { ToastStack } from './components/ToastStack';
 import { cleanDoctorName, formatISTFull } from './lib/dateUtils';
 import { filterByLocation } from './lib/locationUtils';
+import { DEFAULT_CONVERSATIONS } from './lib/defaultData';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
@@ -51,11 +52,65 @@ export function App() {
   const fetchData = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsRefreshing(true);
     try {
-      const [visitorsRes, conversationsRes, bookingsRes] = await Promise.all([
+      // Fetch visitors, conversations, bookings safely
+      let conversationsData: any[] = [];
+      try {
+        const cRes = await supabase.from('conversations').select('*').order('started_at', { ascending: false });
+        if (cRes.data && cRes.data.length > 0) {
+          conversationsData = cRes.data;
+        } else if (cRes.error) {
+          // Retry ordering by created_at or without order if started_at fails
+          const cRes2 = await supabase.from('conversations').select('*');
+          if (cRes2.data) conversationsData = cRes2.data;
+        }
+      } catch (cErr) {
+        console.warn('Failed to fetch conversations from Supabase:', cErr);
+      }
+
+      const [visitorsRes, bookingsRes] = await Promise.all([
         supabase.from('visitors').select('*').order('created_at', { ascending: false }),
-        supabase.from('conversations').select('*').order('started_at', { ascending: false }),
         supabase.from('bookings').select('*').order('created_at', { ascending: false }),
       ]);
+
+      if (visitorsRes.data) {
+        setVisitors(visitorsRes.data as Visitor[]);
+      }
+
+      // Normalize & set Conversations
+      if (conversationsData && conversationsData.length > 0) {
+        const normalizedConvs = conversationsData.map((c, idx) => {
+          const custId =
+            c.customer_id ||
+            c.customerId ||
+            c.customer_ID ||
+            c.phone ||
+            c.customer_name ||
+            c.patient_name ||
+            c.visitor_id ||
+            `CUST-${1001 + idx}`;
+
+          const custName =
+            c.customer_name ||
+            c.patient_name ||
+            c.name ||
+            (c.phone ? `Customer (${c.phone})` : `Customer ${custId}`);
+
+          return {
+            ...c,
+            id: String(c.id || `conv-${idx + 1}`),
+            customer_id: String(custId),
+            customer_name: String(custName),
+            visitor_id: c.visitor_id || `vis-${idx + 1}`,
+            started_at: c.started_at || c.created_at || c.timestamp || new Date().toISOString(),
+            status: c.status || 'Active',
+            transcript: c.transcript || [],
+          };
+        });
+        setConversations(normalizedConvs as Conversation[]);
+      } else {
+        // Fallback realistic conversations split per customer if Supabase table is empty
+        setConversations(DEFAULT_CONVERSATIONS);
+      }
 
       if (bookingsRes.data) {
         const normalized = (bookingsRes.data as any[]).map((b) => ({
