@@ -7,25 +7,22 @@ import {
   getServiceType,
   getSlotDatetime,
   formatISTFull,
+  formatIST,
   formatForDateTimeLocalInput,
   dateTimeLocalToISTISO,
+  isAppointmentDateReached,
 } from '../lib/dateUtils';
 import { triggerRescheduleWebhook, triggerNotifyWebhook } from '../lib/webhook';
 import { StatusBadge } from './StatusBadge';
+import { CancelBookingModal } from './CancelBookingModal';
 import {
   X,
-  Calendar,
-  User,
   Phone,
   Mail,
-  Wrench,
-  Building2,
-  Bell,
-  Clock,
-  Send,
   Save,
-  FileText,
   Fan,
+  CheckCircle2,
+  Ban,
 } from 'lucide-react';
 
 interface BookingDrawerProps {
@@ -47,9 +44,8 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
   const [status, setStatus] = useState<string>('booked');
   const [notes, setNotes] = useState('');
 
-  const [customNotifyMsg, setCustomNotifyMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSendingNotify, setIsSendingNotify] = useState(false);
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
 
   useEffect(() => {
     if (booking) {
@@ -59,7 +55,6 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
       setSlotDatetimeLocal(formatForDateTimeLocalInput(slot));
       setStatus(booking.status || 'booked');
       setNotes(booking.notes || '');
-      setCustomNotifyMsg('');
     }
   }, [booking]);
 
@@ -73,6 +68,25 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
       const isoSlot = dateTimeLocalToISTISO(slotDatetimeLocal);
       const cleanedDoctor = cleanDoctorName(doctor);
 
+      // Validation check if status is 'completed'
+      if (status === 'completed') {
+        if (!isAppointmentDateReached(isoSlot)) {
+          addToast(
+            'error',
+            `Cannot mark as Completed before appointment date (${formatIST(isoSlot)}). Status can only be completed on or after the appointment date.`
+          );
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
+      // If user selected 'cancelled', require modal prompt
+      if (status === 'cancelled') {
+        setIsCancelModalOpen(true);
+        setIsSubmitting(false);
+        return;
+      }
+
       // 1. Update Supabase
       const success = await onUpdateBooking({
         id: booking.id,
@@ -83,7 +97,7 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
         technician: cleanedDoctor,
         slot_datetime: isoSlot,
         appointment_datetime: isoSlot,
-        status: 'rescheduled',
+        status,
         notes,
       });
 
@@ -97,11 +111,11 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
           department,
           doctor: cleanedDoctor,
           slot_datetime: isoSlot,
-          status: 'rescheduled',
+          status,
           notes,
         });
 
-        addToast('success', `${BRAND.appointmentLabel} rescheduled for ${booking.patient_name}`);
+        addToast('success', `${BRAND.appointmentLabel} details updated for ${booking.patient_name}`);
         onClose();
       } else {
         addToast('error', 'Failed to update booking in Supabase');
@@ -113,34 +127,64 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
     }
   };
 
-  const handleSendNotification = async () => {
-    if (!customNotifyMsg.trim()) {
-      addToast('error', 'Please enter a notification message');
-      return;
-    }
+  const handleConfirmCancellation = async (bookingId: string, reason: string) => {
+    const updatedNotes = notes
+      ? `${notes} | [Cancellation Reason]: ${reason}`
+      : `[Cancellation Reason]: ${reason}`;
 
-    setIsSendingNotify(true);
-    try {
-      await triggerNotifyWebhook({
-        id: booking.id,
-        patient_name: booking.patient_name,
-        phone: booking.phone,
-        message: customNotifyMsg,
-        doctor: cleanDoctorName(booking.doctor),
-        slot_datetime: booking.slot_datetime,
-      });
+    const success = await onUpdateBooking({
+      id: bookingId,
+      status: 'cancelled',
+      notes: updatedNotes,
+    });
 
-      addToast('success', `Notification sent to ${booking.phone}`);
-      setCustomNotifyMsg('');
-    } catch (e: any) {
-      addToast('error', 'Failed to dispatch notification');
-    } finally {
-      setIsSendingNotify(false);
+    if (success) {
+      addToast('success', `Booking cancelled for ${booking.patient_name || BRAND.entityLabel}`);
+      onClose();
+    } else {
+      addToast('error', 'Failed to cancel booking.');
     }
   };
 
+  const handleMarkCompletedDirect = async () => {
+    const isoSlot = dateTimeLocalToISTISO(slotDatetimeLocal);
+    if (!isAppointmentDateReached(isoSlot)) {
+      addToast(
+        'error',
+        `Cannot mark as Completed before appointment date (${formatIST(isoSlot)}). Status can only be completed on or after the appointment date.`
+      );
+      return;
+    }
+
+    setIsSubmitting(true);
+    const success = await onUpdateBooking({
+      id: booking.id,
+      status: 'completed',
+    });
+
+    if (success) {
+      addToast('success', `Appointment marked as Completed for ${booking.patient_name}`);
+      onClose();
+    } else {
+      addToast('error', 'Failed to update booking status');
+    }
+    setIsSubmitting(false);
+  };
+
+  const currentStatusNorm = (booking.status || '').toLowerCase().trim();
+  const isCompleted = currentStatusNorm === 'completed';
+  const isCancelled = currentStatusNorm === 'cancelled' || currentStatusNorm === 'canceled';
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
+      {/* Cancellation Reason Modal */}
+      <CancelBookingModal
+        booking={booking}
+        isOpen={isCancelModalOpen}
+        onClose={() => setIsCancelModalOpen(false)}
+        onConfirm={handleConfirmCancellation}
+      />
+
       {/* Backdrop */}
       <div onClick={onClose} className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs transition-opacity" />
 
@@ -185,12 +229,80 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
                 <span className="truncate">{booking.email || 'No email'}</span>
               </div>
             </div>
+
+            {/* Quick Status Bar inside drawer */}
+            <div className="pt-2 border-t border-[#E7E5E4] flex items-center gap-2">
+              <button
+                type="button"
+                disabled={isCompleted || isCancelled}
+                onClick={handleMarkCompletedDirect}
+                title={
+                  isCompleted
+                    ? 'Already completed'
+                    : isCancelled
+                    ? 'Cannot complete a cancelled booking'
+                    : 'Mark as Completed (Only on or after appointment date)'
+                }
+                className={`flex-1 py-1.5 px-2 rounded text-[11px] font-medium flex items-center justify-center gap-1 transition-colors ${
+                  isCompleted
+                    ? 'bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE] opacity-60 cursor-not-allowed'
+                    : isCancelled
+                    ? 'bg-[#F5F5F4] text-[#A8A29E] border border-[#E7E5E4] opacity-50 cursor-not-allowed'
+                    : 'bg-[#EFF6FF] text-[#1D4ED8] hover:bg-[#DBEAFE] border border-[#BFDBFE]'
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{isCompleted ? 'Completed' : 'Mark Completed'}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isCompleted || isCancelled}
+                onClick={() => setIsCancelModalOpen(true)}
+                title={
+                  isCancelled
+                    ? 'Already cancelled'
+                    : isCompleted
+                    ? 'Cannot cancel a completed booking'
+                    : 'Cancel Booking (Reason required)'
+                }
+                className={`flex-1 py-1.5 px-2 rounded text-[11px] font-medium flex items-center justify-center gap-1 transition-colors ${
+                  isCancelled
+                    ? 'bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA] opacity-60 cursor-not-allowed'
+                    : isCompleted
+                    ? 'bg-[#F5F5F4] text-[#A8A29E] border border-[#E7E5E4] opacity-50 cursor-not-allowed'
+                    : 'bg-[#FEF2F2] text-[#B91C1C] hover:bg-[#FEE2E2] border border-[#FECACA]'
+                }`}
+              >
+                <Ban className="w-3.5 h-3.5" />
+                <span>{isCancelled ? 'Cancelled' : 'Cancel Booking'}</span>
+              </button>
+            </div>
           </div>
 
-          {/* Reschedule Form */}
+          {/* Reschedule & Edit Form */}
           <form onSubmit={handleSaveReschedule} className="space-y-3.5">
             <div className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#6B7280]">
-              Reschedule & Edit Dispatch
+              Status & Dispatch Information
+            </div>
+
+            {/* Status Selector */}
+            <div>
+              <label className="block text-[11px] text-[#78716C] mb-1">Booking Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="w-full px-3 py-1.5 bg-white border border-[#E7E5E4] rounded-md text-[13px] text-[#1C1917] focus:outline-none focus:ring-1 focus:ring-[#0F172A]"
+              >
+                <option value="booked">Booked</option>
+                <option value="rescheduled">Rescheduled</option>
+                <option value="completed" disabled={isCancelled}>
+                  Completed {isCancelled ? '(Disabled for cancelled booking)' : '(Only on/after appointment date)'}
+                </option>
+                <option value="cancelled" disabled={isCompleted}>
+                  Cancelled {isCompleted ? '(Disabled for completed booking)' : '(Reason required)'}
+                </option>
+              </select>
             </div>
 
             {/* Department / Service Type */}
@@ -233,11 +345,11 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
 
             {/* Notes */}
             <div>
-              <label className="block text-[11px] text-[#78716C] mb-1">Address / Issue Notes</label>
+              <label className="block text-[11px] text-[#78716C] mb-1">Address / Issue Notes / Cancellation Reasons</label>
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                rows={2}
+                rows={3}
                 placeholder="e.g. Customer reported cooling coil issue, address Sector 62..."
                 className="w-full px-3 py-1.5 bg-white border border-[#E7E5E4] rounded-md text-[12px] text-[#1C1917] focus:outline-none focus:ring-1 focus:ring-[#0F172A]"
               />

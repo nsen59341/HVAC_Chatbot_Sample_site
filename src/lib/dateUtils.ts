@@ -243,3 +243,34 @@ export function dateTimeLocalToISTISO(localValue: string): string {
   
   return `${timeWithSeconds}+05:30`;
 }
+
+/**
+ * Returns true if the current time/date in IST is on or after the appointment date.
+ * Enforces rule: Completed should only be done on or after appointment date only.
+ */
+export function isAppointmentDateReached(dateStr: string | null | undefined): boolean {
+  if (!dateStr) return true;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return true;
+
+    const now = new Date();
+
+    const getISTDateStr = (dateObj: Date) => {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(dateObj);
+    };
+
+    const todayISTStr = getISTDateStr(now);
+    const apptISTStr = getISTDateStr(d);
+
+    return todayISTStr >= apptISTStr || now.getTime() >= d.getTime();
+  } catch (e) {
+    return true;
+  }
+}
+

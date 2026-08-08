@@ -356,6 +356,8 @@ export function App() {
               isLoading={isLoading}
               onSelectBooking={(b) => setSelectedBooking(b)}
               setActiveTab={setActiveTab}
+              onUpdateBooking={handleUpdateBooking}
+              addToast={addToast}
             />
           )}
 
@@ -366,6 +368,8 @@ export function App() {
               onSelectBooking={(b) => setSelectedBooking(b)}
               selectedLocation={selectedLocation}
               onExportCSV={handleExportCSV}
+              onUpdateBooking={handleUpdateBooking}
+              addToast={addToast}
             />
           )}
 

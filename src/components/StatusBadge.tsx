@@ -11,7 +11,10 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = ''
   let styles = 'bg-[#F5F5F4] text-[#78716C] border-[#E7E5E4]';
   let label = status || 'Unknown';
 
-  if (normalized === 'booked') {
+  if (normalized === 'completed') {
+    styles = 'bg-[#EFF6FF] text-[#1D4ED8] border-[#DBEAFE]';
+    label = 'Completed';
+  } else if (normalized === 'booked') {
     styles = 'bg-[#F0FDF4] text-[#15803D] border-[#DCFCE7]';
     label = 'Booked';
   } else if (normalized === 'rescheduled') {

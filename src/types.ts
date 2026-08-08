@@ -31,13 +31,13 @@ export interface Booking {
   technician?: string | null;
   slot_datetime: string;
   appointment_datetime?: string | null;
-  status: 'booked' | 'rescheduled' | 'cancelled' | string;
+  status: 'booked' | 'rescheduled' | 'completed' | 'cancelled' | string;
   notes: string | null;
 }
 
 export type ActiveTab = 'dashboard' | 'bookings' | 'conversations';
 
-export type BookingFilterStatus = 'all' | 'booked' | 'rescheduled' | 'cancelled';
+export type BookingFilterStatus = 'all' | 'booked' | 'rescheduled' | 'completed' | 'cancelled';
 
 export type DateRangeFilter = 'today' | '7days' | 'all';
 

@@ -3,16 +3,25 @@ import { Booking, BookingFilterStatus, DateRangeFilter, SortField, SortOrder } f
 import { BRAND } from '../lib/branding';
 import { StatusBadge } from './StatusBadge';
 import { TableSkeleton } from './Skeletons';
-import { formatIST, getTechnicianName, getServiceType, getSlotDatetime, isTodayIST, isWithinDaysIST } from '../lib/dateUtils';
+import { CancelBookingModal } from './CancelBookingModal';
+import {
+  formatIST,
+  getTechnicianName,
+  getServiceType,
+  getSlotDatetime,
+  isTodayIST,
+  isWithinDaysIST,
+  isAppointmentDateReached,
+} from '../lib/dateUtils';
 import {
   Search,
   Download,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  Calendar,
-  X,
-  ChevronRight,
+  CheckCircle2,
+  Ban,
+  Eye,
 } from 'lucide-react';
 
 interface BookingsViewProps {
@@ -21,6 +30,8 @@ interface BookingsViewProps {
   onSelectBooking: (booking: Booking) => void;
   selectedLocation: string;
   onExportCSV: (bookingsToExport: Booking[]) => void;
+  onUpdateBooking: (updated: Partial<Booking> & { id: string }) => Promise<boolean>;
+  addToast: (type: 'success' | 'error', message: string) => void;
 }
 
 export const BookingsView: React.FC<BookingsViewProps> = ({
@@ -29,10 +40,13 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   onSelectBooking,
   selectedLocation,
   onExportCSV,
+  onUpdateBooking,
+  addToast,
 }) => {
   const [filterStatus, setFilterStatus] = useState<BookingFilterStatus>('all');
   const [dateRange, setDateRange] = useState<DateRangeFilter>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [cancellingBooking, setCancellingBooking] = useState<Booking | null>(null);
 
   // Sorting
   const [sortField, setSortField] = useState<SortField>('created_at');
@@ -40,11 +54,12 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
 
   // Status counts
   const statusCounts = useMemo(() => {
-    const counts = { all: bookings.length, booked: 0, rescheduled: 0, cancelled: 0 };
+    const counts = { all: bookings.length, booked: 0, rescheduled: 0, completed: 0, cancelled: 0 };
     bookings.forEach((b) => {
       const st = (b.status || '').toLowerCase().trim();
       if (st === 'booked') counts.booked++;
       else if (st === 'rescheduled') counts.rescheduled++;
+      else if (st === 'completed') counts.completed++;
       else if (st === 'cancelled' || st === 'canceled') counts.cancelled++;
     });
     return counts;
@@ -60,7 +75,6 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
         const locQuery = selectedLocation.toLowerCase();
         if (!notes.includes(locQuery) && !dept.includes(locQuery)) {
           // If notes or department don't match location, skip
-          // Note: if user location filter is active, don't strictly exclude unless mismatched
         }
       }
 
@@ -107,6 +121,54 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
     });
   }, [bookings, filterStatus, dateRange, searchQuery, selectedLocation]);
 
+  // Handle Mark Completed
+  const handleMarkCompleted = async (b: Booking, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const slotStr = getSlotDatetime(b);
+
+    if (!isAppointmentDateReached(slotStr)) {
+      addToast(
+        'error',
+        `Cannot mark as Completed before appointment date (${formatIST(slotStr)}). Status can only be completed on or after the appointment date.`
+      );
+      return;
+    }
+
+    const success = await onUpdateBooking({
+      id: b.id,
+      status: 'completed',
+    });
+
+    if (success) {
+      addToast('success', `Appointment marked as Completed for ${b.patient_name || BRAND.entityLabel}`);
+    } else {
+      addToast('error', 'Failed to update booking status.');
+    }
+  };
+
+  // Handle Cancel Confirmation
+  const handleConfirmCancellation = async (bookingId: string, reason: string) => {
+    const target = bookings.find((b) => b.id === bookingId);
+    if (!target) return;
+
+    const existingNotes = target.notes || '';
+    const updatedNotes = existingNotes
+      ? `${existingNotes} | [Cancellation Reason]: ${reason}`
+      : `[Cancellation Reason]: ${reason}`;
+
+    const success = await onUpdateBooking({
+      id: bookingId,
+      status: 'cancelled',
+      notes: updatedNotes,
+    });
+
+    if (success) {
+      addToast('success', `Booking cancelled for ${target.patient_name || BRAND.entityLabel}`);
+    } else {
+      addToast('error', 'Failed to cancel booking.');
+    }
+  };
+
   // Sorted Bookings
   const sortedBookings = useMemo(() => {
     return [...filteredBookings].sort((a, b) => {
@@ -150,6 +212,14 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
 
   return (
     <div className="space-y-4">
+      {/* Cancellation Reason Modal */}
+      <CancelBookingModal
+        booking={cancellingBooking}
+        isOpen={Boolean(cancellingBooking)}
+        onClose={() => setCancellingBooking(null)}
+        onConfirm={handleConfirmCancellation}
+      />
+
       {/* Controls Bar */}
       <div className="bg-white rounded-lg border border-[#E7E5E4] p-3.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)] flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
         {/* Search Input */}
@@ -181,6 +251,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                 { id: 'all', label: 'All', count: statusCounts.all },
                 { id: 'booked', label: 'Booked', count: statusCounts.booked },
                 { id: 'rescheduled', label: 'Rescheduled', count: statusCounts.rescheduled },
+                { id: 'completed', label: 'Completed', count: statusCounts.completed },
                 { id: 'cancelled', label: 'Cancelled', count: statusCounts.cancelled },
               ] as const
             ).map((tab) => {
@@ -299,53 +370,125 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                       {renderSortIndicator('created_at')}
                     </div>
                   </th>
+                  <th className="py-2.5 px-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#F5F5F4]">
-                {sortedBookings.map((b) => (
-                  <tr
-                    key={b.id}
-                    onClick={() => onSelectBooking(b)}
-                    className="h-[44px] hover:bg-[#FAFAF9] transition-colors cursor-pointer group"
-                  >
-                    {/* Patient */}
-                    <td className="py-2 px-4 truncate max-w-[180px]">
-                      <div className="font-normal text-[#1C1917] truncate">
-                        {b.patient_name || BRAND.entityLabel}
-                      </div>
-                    </td>
+                {sortedBookings.map((b) => {
+                  const currentStatus = (b.status || '').toLowerCase().trim();
+                  const isCompleted = currentStatus === 'completed';
+                  const isCancelled = currentStatus === 'cancelled' || currentStatus === 'canceled';
 
-                    {/* Phone */}
-                    <td className="py-2 px-3 font-mono text-[#78716C] tabular-nums truncate max-w-[120px] font-normal">
-                      {b.phone || '-'}
-                    </td>
+                  return (
+                    <tr
+                      key={b.id}
+                      onClick={() => onSelectBooking(b)}
+                      className="h-[44px] hover:bg-[#FAFAF9] transition-colors cursor-pointer group"
+                    >
+                      {/* Patient */}
+                      <td className="py-2 px-4 truncate max-w-[180px]">
+                        <div className="font-normal text-[#1C1917] truncate">
+                          {b.patient_name || BRAND.entityLabel}
+                        </div>
+                      </td>
 
-                    {/* Department */}
-                    <td className="py-2 px-3 text-[#1C1917] truncate max-w-[140px] font-normal">
-                      {getServiceType(b)}
-                    </td>
+                      {/* Phone */}
+                      <td className="py-2 px-3 font-mono text-[#78716C] tabular-nums truncate max-w-[120px] font-normal">
+                        {b.phone || '-'}
+                      </td>
 
-                    {/* Technician */}
-                    <td className="py-2 px-3 text-[#1C1917] truncate max-w-[160px] font-medium">
-                      {getTechnicianName(b)}
-                    </td>
+                      {/* Department */}
+                      <td className="py-2 px-3 text-[#1C1917] truncate max-w-[140px] font-normal">
+                        {getServiceType(b)}
+                      </td>
 
-                    {/* Slot in IST */}
-                    <td className="py-2 px-3 font-mono text-[#1C1917] tabular-nums whitespace-nowrap font-medium">
-                      {formatIST(getSlotDatetime(b))}
-                    </td>
+                      {/* Technician */}
+                      <td className="py-2 px-3 text-[#1C1917] truncate max-w-[160px] font-medium">
+                        {getTechnicianName(b)}
+                      </td>
 
-                    {/* Status */}
-                    <td className="py-2 px-3 whitespace-nowrap">
-                      <StatusBadge status={b.status} />
-                    </td>
+                      {/* Slot in IST */}
+                      <td className="py-2 px-3 font-mono text-[#1C1917] tabular-nums whitespace-nowrap font-medium">
+                        {formatIST(getSlotDatetime(b))}
+                      </td>
 
-                    {/* Booked on */}
-                    <td className="py-2 px-3 font-mono text-[#78716C] text-[12px] tabular-nums whitespace-nowrap font-normal">
-                      {formatIST(b.created_at)}
-                    </td>
-                  </tr>
-                ))}
+                      {/* Status */}
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        <StatusBadge status={b.status} />
+                      </td>
+
+                      {/* Booked on */}
+                      <td className="py-2 px-3 font-mono text-[#78716C] text-[12px] tabular-nums whitespace-nowrap font-normal">
+                        {formatIST(b.created_at)}
+                      </td>
+
+                      {/* Quick Actions */}
+                      <td className="py-2 px-3 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1">
+                          {/* Complete Button */}
+                          <button
+                            type="button"
+                            disabled={isCompleted || isCancelled}
+                            onClick={(e) => handleMarkCompleted(b, e)}
+                            title={
+                              isCompleted
+                                ? 'Already completed'
+                                : isCancelled
+                                ? 'Cannot complete a cancelled booking'
+                                : 'Mark as Completed (Only allowed on/after appointment date)'
+                            }
+                            className={`px-2 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
+                              isCompleted
+                                ? 'bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE] opacity-60 cursor-not-allowed'
+                                : isCancelled
+                                ? 'bg-[#F5F5F4] text-[#A8A29E] border border-[#E7E5E4] opacity-50 cursor-not-allowed'
+                                : 'bg-[#EFF6FF] text-[#1D4ED8] hover:bg-[#DBEAFE] border border-[#BFDBFE]'
+                            }`}
+                          >
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span className="hidden xl:inline">{isCompleted ? 'Completed' : 'Complete'}</span>
+                          </button>
+
+                          {/* Cancel Button */}
+                          <button
+                            type="button"
+                            disabled={isCompleted || isCancelled}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCancellingBooking(b);
+                            }}
+                            title={
+                              isCancelled
+                                ? 'Already cancelled'
+                                : isCompleted
+                                ? 'Cannot cancel a completed booking'
+                                : 'Cancel Booking (Reason required)'
+                            }
+                            className={`px-2 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
+                              isCancelled
+                                ? 'bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA] opacity-60 cursor-not-allowed'
+                                : isCompleted
+                                ? 'bg-[#F5F5F4] text-[#A8A29E] border border-[#E7E5E4] opacity-50 cursor-not-allowed'
+                                : 'bg-[#FEF2F2] text-[#B91C1C] hover:bg-[#FEE2E2] border border-[#FECACA]'
+                            }`}
+                          >
+                            <Ban className="w-3 h-3" />
+                            <span className="hidden xl:inline">{isCancelled ? 'Cancelled' : 'Cancel'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => onSelectBooking(b)}
+                            title="View / Edit Details"
+                            className="p-1 rounded text-[#78716C] hover:text-[#1C1917] hover:bg-[#E7E5E4] transition-colors"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
