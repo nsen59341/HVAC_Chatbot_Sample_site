@@ -217,6 +217,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <StatusBadge status={b.status} />
                     <span className="text-[11px] text-[#78716C] truncate hidden md:inline">
                       {getServiceType(b)} • {getTechnicianName(b)}
+                      {(b.service_address || (b as any).address) && (
+                        <span className="text-[#A8A29E]"> • {b.service_address || (b as any).address}</span>
+                      )}
                     </span>
                   </div>
 

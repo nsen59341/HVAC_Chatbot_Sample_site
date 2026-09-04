@@ -148,15 +148,6 @@ export const Header: React.FC<HeaderProps> = ({
                   Role: HVAC Dispatch Manager
                 </div>
                 <div className="border-t border-[#F5F5F4] pt-1">
-                  <a
-                    href={BRAND_CONFIG.chatUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full flex items-center justify-between text-left px-3 py-1.5 hover:bg-[#FAFAF9] text-[12px] text-[#D97706] font-medium"
-                  >
-                    <span>Customer AI Chatbot</span>
-                    <span className="text-[10px]">↗</span>
-                  </a>
                   <button
                     onClick={() => {
                       setIsAvatarOpen(false);

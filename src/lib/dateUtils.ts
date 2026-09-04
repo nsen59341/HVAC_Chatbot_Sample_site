@@ -12,11 +12,56 @@ export function cleanDoctorName(doctorStr: string | null | undefined): string {
   return cleaned;
 }
 
+export const DEFAULT_TECHNICIANS = [
+  { id: 1, name: 'Rajesh Kumar' },
+  { id: 2, name: 'Priya Menon' },
+  { id: 3, name: 'Vikram Patel' },
+  { id: 4, name: 'Suresh Sharma' },
+  { id: 5, name: 'Ananya Roy' },
+];
+
+export const DEFAULT_TECHNICIAN_MAP: Record<number, string> = {
+  1: 'Rajesh Kumar',
+  2: 'Priya Menon',
+  3: 'Vikram Patel',
+  4: 'Suresh Sharma',
+  5: 'Ananya Roy',
+};
+
+export function getTechnicianId(val: any, fallback = 1): number {
+  if (typeof val === 'number' && !isNaN(val)) return val;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    const num = parseInt(trimmed, 10);
+    if (!isNaN(num) && String(num) === trimmed) return num;
+    const lower = trimmed.toLowerCase();
+    if (lower.includes('rajesh')) return 1;
+    if (lower.includes('priya')) return 2;
+    if (lower.includes('vikram')) return 3;
+    if (lower.includes('suresh')) return 4;
+    if (lower.includes('ananya')) return 5;
+  }
+  return fallback;
+}
+
 export function getTechnicianName(booking: any): string {
   if (!booking) return 'Rajesh Kumar';
 
   if (typeof booking === 'string') {
     return cleanDoctorName(booking);
+  }
+
+  // 1. Check joined technicians table record
+  if (booking.technicians && typeof booking.technicians === 'object' && booking.technicians.name) {
+    return cleanDoctorName(booking.technicians.name);
+  }
+
+  // 2. Check foreign key technician_id
+  if (booking.technician_id !== undefined && booking.technician_id !== null) {
+    const tid = Number(booking.technician_id);
+    if (DEFAULT_TECHNICIAN_MAP[tid]) {
+      return DEFAULT_TECHNICIAN_MAP[tid];
+    }
   }
 
   const explicit =

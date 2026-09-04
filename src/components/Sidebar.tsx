@@ -9,7 +9,6 @@ import {
   RefreshCw,
   Fan,
   PhoneCall,
-  ExternalLink,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -103,20 +102,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
           );
         })}
-
-        {/* Live N8N Chatbot External Link */}
-        <div className="pt-3 border-t border-slate-800/60 mt-3">
-          <a
-            href={BRAND_CONFIG.chatUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-[12px] text-amber-300 bg-amber-950/40 border border-amber-800/50 hover:bg-amber-900/40 transition-colors font-medium"
-          >
-            <MessageSquare className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-            <span className="flex-1 truncate">Customer AI Chatbot</span>
-            <ExternalLink className="w-3 h-3 text-amber-400 shrink-0" />
-          </a>
-        </div>
       </div>
 
       {/* Live Sync Status Widget */}

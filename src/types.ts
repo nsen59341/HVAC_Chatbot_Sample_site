@@ -18,17 +18,29 @@ export interface Conversation {
   status: string | null;
 }
 
+export interface Technician {
+  id: number;
+  name: string;
+  phone_number?: string | null;
+  created_at?: string;
+}
+
 export interface Booking {
   id: string;
   created_at: string;
   patient_name: string;
+  customer_name?: string | null;
   phone: string;
   email: string | null;
   department: string | null;
   service_type?: string | null;
   service?: string | null;
+  service_address?: string | null;
+  address?: string | null;
   doctor: string | null;
   technician?: string | null;
+  technician_id?: number | null;
+  technicians?: Technician | null;
   slot_datetime: string;
   appointment_datetime?: string | null;
   status: 'booked' | 'rescheduled' | 'completed' | 'cancelled' | string;

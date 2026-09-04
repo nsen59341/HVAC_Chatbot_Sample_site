@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   Ban,
   Eye,
+  MapPin,
 } from 'lucide-react';
 
 interface BookingsViewProps {
@@ -68,16 +69,6 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   // Filtered & Searched Bookings
   const filteredBookings = useMemo(() => {
     return bookings.filter((b) => {
-      // Location filter (matching notes or location string)
-      if (selectedLocation !== 'All') {
-        const notes = (b.notes || '').toLowerCase();
-        const dept = (b.department || '').toLowerCase();
-        const locQuery = selectedLocation.toLowerCase();
-        if (!notes.includes(locQuery) && !dept.includes(locQuery)) {
-          // If notes or department don't match location, skip
-        }
-      }
-
       // Status filter
       if (filterStatus !== 'all') {
         const st = (b.status || '').toLowerCase().trim();
@@ -106,6 +97,8 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
         const doctor = getTechnicianName(b).toLowerCase();
         const department = getServiceType(b).toLowerCase();
         const slotStr = formatIST(getSlotDatetime(b)).toLowerCase();
+        const address = String(b.service_address || (b as any).address || '').toLowerCase();
+        const notes = String(b.notes || '').toLowerCase();
 
         return (
           patientName.includes(q) ||
@@ -113,13 +106,15 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
           email.includes(q) ||
           doctor.includes(q) ||
           department.includes(q) ||
-          slotStr.includes(q)
+          slotStr.includes(q) ||
+          address.includes(q) ||
+          notes.includes(q)
         );
       }
 
       return true;
     });
-  }, [bookings, filterStatus, dateRange, searchQuery, selectedLocation]);
+  }, [bookings, filterStatus, dateRange, searchQuery]);
 
   // Handle Mark Completed
   const handleMarkCompleted = async (b: Booking, e: React.MouseEvent) => {
@@ -385,11 +380,17 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                       onClick={() => onSelectBooking(b)}
                       className="h-[44px] hover:bg-[#FAFAF9] transition-colors cursor-pointer group"
                     >
-                      {/* Patient */}
-                      <td className="py-2 px-4 truncate max-w-[180px]">
-                        <div className="font-normal text-[#1C1917] truncate">
+                      {/* Patient / Customer */}
+                      <td className="py-2 px-4 max-w-[220px]">
+                        <div className="font-medium text-[#1C1917] truncate">
                           {b.patient_name || BRAND.entityLabel}
                         </div>
+                        {(b.service_address || (b as any).address) && (
+                          <div className="text-[11px] text-[#78716C] truncate flex items-center gap-1 mt-0.5">
+                            <MapPin className="w-3 h-3 text-[#D97706] shrink-0" />
+                            <span className="truncate">{b.service_address || (b as any).address}</span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Phone */}

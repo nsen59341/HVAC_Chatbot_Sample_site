@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from './lib/supabase';
 import { BRAND } from './lib/branding';
-import { Visitor, Conversation, Booking, ActiveTab, ToastMessage } from './types';
+import { Visitor, Conversation, Booking, ActiveTab, ToastMessage, Technician } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { DashboardView } from './components/DashboardView';
@@ -11,7 +11,13 @@ import { BookingDrawer } from './components/BookingDrawer';
 import { CommandPalette } from './components/CommandPalette';
 import { WebhookModal } from './components/WebhookModal';
 import { ToastStack } from './components/ToastStack';
-import { cleanDoctorName, formatISTFull } from './lib/dateUtils';
+import {
+  cleanDoctorName,
+  formatISTFull,
+  DEFAULT_TECHNICIANS,
+  DEFAULT_TECHNICIAN_MAP,
+  getTechnicianId,
+} from './lib/dateUtils';
 import { filterByLocation } from './lib/locationUtils';
 import { DEFAULT_CONVERSATIONS } from './lib/defaultData';
 
@@ -23,6 +29,7 @@ export function App() {
   const [visitors, setVisitors] = useState<Visitor[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [techniciansList, setTechniciansList] = useState<Technician[]>(DEFAULT_TECHNICIANS);
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -55,25 +62,45 @@ export function App() {
       // Fetch visitors, conversations, bookings safely
       let conversationsData: any[] = [];
       try {
-        const cRes = await supabase.from('conversations').select('*').order('started_at', { ascending: false });
+        const cRes = await supabase.from('conversations').select('*, customers(*)').order('started_at', { ascending: false });
         if (cRes.data && cRes.data.length > 0) {
           conversationsData = cRes.data;
         } else if (cRes.error) {
-          // Retry ordering by created_at or without order if started_at fails
-          const cRes2 = await supabase.from('conversations').select('*');
-          if (cRes2.data) conversationsData = cRes2.data;
+          // Retry basic select if joined query had schema issue
+          const cRes2 = await supabase.from('conversations').select('*').order('started_at', { ascending: false });
+          if (cRes2.data && cRes2.data.length > 0) {
+            conversationsData = cRes2.data;
+          } else {
+            const cRes3 = await supabase.from('conversations').select('*');
+            if (cRes3.data) conversationsData = cRes3.data;
+          }
         }
       } catch (cErr) {
         console.warn('Failed to fetch conversations from Supabase:', cErr);
       }
 
-      const [visitorsRes, bookingsRes] = await Promise.all([
+      const [visitorsRes, bookingsJoinedRes, techniciansRes] = await Promise.all([
         supabase.from('visitors').select('*').order('created_at', { ascending: false }),
-        supabase.from('bookings').select('*').order('created_at', { ascending: false }),
+        supabase.from('bookings').select('*, technicians(*)').order('created_at', { ascending: false }),
+        supabase.from('technicians').select('*').order('id', { ascending: true }),
       ]);
 
       if (visitorsRes.data) {
         setVisitors(visitorsRes.data as Visitor[]);
+      }
+
+      if (techniciansRes.data && techniciansRes.data.length > 0) {
+        setTechniciansList(techniciansRes.data as Technician[]);
+      }
+
+      // If joined bookings query had an issue, fallback to select('*')
+      let bookingsData = bookingsJoinedRes.data;
+      if (!bookingsData && bookingsJoinedRes.error) {
+        console.warn('Joined bookings query failed, falling back to basic select:', bookingsJoinedRes.error.message);
+        const fallbackBookingsRes = await supabase.from('bookings').select('*').order('created_at', { ascending: false });
+        if (fallbackBookingsRes.data) {
+          bookingsData = fallbackBookingsRes.data;
+        }
       }
 
       // Normalize & set Conversations
@@ -95,11 +122,15 @@ export function App() {
             c.name ||
             (c.phone ? `Customer (${c.phone})` : `Customer ${custId}`);
 
+          const custAddress = c.customers?.service_address || c.service_address || c.address || null;
+
           return {
             ...c,
             id: String(c.id || `conv-${idx + 1}`),
             customer_id: String(custId),
             customer_name: String(custName),
+            service_address: custAddress,
+            address: custAddress,
             visitor_id: c.visitor_id || `vis-${idx + 1}`,
             started_at: c.started_at || c.created_at || c.timestamp || new Date().toISOString(),
             status: c.status || 'Active',
@@ -112,17 +143,35 @@ export function App() {
         setConversations(DEFAULT_CONVERSATIONS);
       }
 
-      if (bookingsRes.data) {
-        const normalized = (bookingsRes.data as any[]).map((b) => ({
-          ...b,
-          patient_name: b.patient_name || b.customer_name || 'Customer',
-          department: b.department || b.service_type || b.service || 'Heating Repair',
-          service_type: b.service_type || b.department || b.service || 'Heating Repair',
-          doctor: b.doctor || b.technician || b.technician_name || 'Rajesh Kumar',
-          technician: b.technician || b.doctor || 'Rajesh Kumar',
-          slot_datetime: b.slot_datetime || b.appointment_datetime || b.created_at || new Date().toISOString(),
-          appointment_datetime: b.appointment_datetime || b.slot_datetime || b.created_at || new Date().toISOString(),
-        }));
+      if (bookingsData) {
+        const normalized = (bookingsData as any[]).map((b) => {
+          const techId =
+            b.technician_id !== undefined && b.technician_id !== null ? Number(b.technician_id) : undefined;
+          const techName =
+            b.technicians?.name ||
+            (techId && DEFAULT_TECHNICIAN_MAP[techId]) ||
+            b.technician_name ||
+            b.technician ||
+            b.doctor ||
+            'Rajesh Kumar';
+
+          const svcAddress = b.service_address || b.address || '';
+
+          return {
+            ...b,
+            service_address: svcAddress,
+            address: svcAddress,
+            technician_id: techId,
+            patient_name: b.patient_name || b.customer_name || 'Customer',
+            customer_name: b.customer_name || b.patient_name || 'Customer',
+            department: b.department || b.service_type || b.service || 'Heating Repair',
+            service_type: b.service_type || b.department || b.service || 'Heating Repair',
+            doctor: techName,
+            technician: techName,
+            slot_datetime: b.slot_datetime || b.appointment_datetime || b.created_at || new Date().toISOString(),
+            appointment_datetime: b.appointment_datetime || b.slot_datetime || b.created_at || new Date().toISOString(),
+          };
+        });
         setBookings(normalized as Booking[]);
       }
 
@@ -154,15 +203,25 @@ export function App() {
         isoDate = !isNaN(parsed.getTime()) ? parsed.toISOString() : rawDate;
       }
 
-      // Build primary update payload for exact Supabase columns:
-      // appointment_datetime, technician, service_type, status, notes, customer_name
+      // Resolve technician_id foreign key for Supabase bookings table
+      let resolvedTechId: number | undefined = undefined;
+      if (updated.technician_id !== undefined && updated.technician_id !== null) {
+        const parsed = Number(updated.technician_id);
+        if (!isNaN(parsed)) resolvedTechId = parsed;
+      } else if (updated.technician || updated.doctor) {
+        resolvedTechId = getTechnicianId(updated.technician || updated.doctor);
+      }
+
+      // Build primary update payload matching exact Supabase bookings columns:
+      // appointment_datetime, customer_name, service_type, service_address, status, notes, technician_id
+      // (Supabase changed 'technician' column to foreign key 'technician_id')
       const dbUpdateData: Record<string, any> = {};
 
       if (isoDate) {
         dbUpdateData.appointment_datetime = isoDate;
       }
-      if (updated.technician !== undefined || updated.doctor !== undefined) {
-        dbUpdateData.technician = updated.technician || updated.doctor;
+      if (resolvedTechId !== undefined) {
+        dbUpdateData.technician_id = resolvedTechId;
       }
       if (updated.service_type !== undefined || updated.department !== undefined) {
         dbUpdateData.service_type = updated.service_type || updated.department;
@@ -176,24 +235,23 @@ export function App() {
       if (updated.patient_name !== undefined || (updated as any).customer_name !== undefined) {
         dbUpdateData.customer_name = (updated as any).customer_name || updated.patient_name;
       }
+      if (updated.service_address !== undefined) {
+        dbUpdateData.service_address = updated.service_address;
+      }
 
-      // First attempt: update appointment_datetime with ISO format
       let { data, error } = await supabase
         .from('bookings')
         .update(dbUpdateData)
         .eq('id', updated.id)
         .select();
 
-      // Fallback attempt if first attempt produced error
+      // Fallback attempts if first attempt produced an error
       if (error) {
-        console.warn('Initial update attempt error:', error.message, '- Trying fallback payloads...');
-        
-        // Retry 1: Raw date string + slot_datetime
+        console.warn('Initial update attempt warning:', error.message, '- Retrying fallback payload...');
+
+        // Fallback 1: omit technician_id in case foreign key check or schema issue
         const fallback1: Record<string, any> = { ...dbUpdateData };
-        if (rawDate) {
-          fallback1.appointment_datetime = rawDate;
-          fallback1.slot_datetime = isoDate || rawDate;
-        }
+        delete fallback1.technician_id;
 
         const res1 = await supabase
           .from('bookings')
@@ -205,14 +263,16 @@ export function App() {
           data = res1.data;
           error = null;
         } else {
-          // Retry 2: Minimal update on appointment_datetime
+          // Fallback 2: minimal update with status and datetime
+          const minimalPayload: Record<string, any> = {
+            status: dbUpdateData.status,
+          };
+          if (isoDate) minimalPayload.appointment_datetime = isoDate;
+          if (dbUpdateData.notes !== undefined) minimalPayload.notes = dbUpdateData.notes;
+
           const res2 = await supabase
             .from('bookings')
-            .update({
-              appointment_datetime: isoDate || rawDate,
-              technician: dbUpdateData.technician,
-              status: dbUpdateData.status,
-            })
+            .update(minimalPayload)
             .eq('id', updated.id)
             .select();
 
@@ -229,16 +289,36 @@ export function App() {
       }
 
       const updatedRecord = data && data.length > 0 ? data[0] : null;
+      const finalTechId =
+        updatedRecord?.technician_id !== undefined && updatedRecord?.technician_id !== null
+          ? Number(updatedRecord.technician_id)
+          : resolvedTechId;
+      const finalTechName =
+        (finalTechId && DEFAULT_TECHNICIAN_MAP[finalTechId]) ||
+        updated.technician ||
+        updated.doctor ||
+        'Rajesh Kumar';
 
       // Merge updated fields into local state and normalize standard frontend field names
+      const mergedAddress =
+        updatedRecord?.service_address ||
+        updated.service_address ||
+        (updatedRecord as any)?.address ||
+        (updated as any).address ||
+        '';
+
       const mergedFields = {
         ...updated,
         ...(updatedRecord || {}),
+        service_address: mergedAddress,
+        address: mergedAddress,
+        technician_id: finalTechId,
         patient_name: updatedRecord?.customer_name || updated.patient_name || 'Customer',
+        customer_name: updatedRecord?.customer_name || updated.patient_name || 'Customer',
         department: updatedRecord?.service_type || updated.department || 'Heating Repair',
         service_type: updatedRecord?.service_type || updatedRecord?.department || updated.service_type || 'Heating Repair',
-        doctor: updatedRecord?.technician || updated.doctor || 'Rajesh Kumar',
-        technician: updatedRecord?.technician || updatedRecord?.doctor || updated.technician || 'Rajesh Kumar',
+        doctor: finalTechName,
+        technician: finalTechName,
         slot_datetime: updatedRecord?.appointment_datetime || updatedRecord?.slot_datetime || isoDate || rawDate || updated.slot_datetime,
         appointment_datetime: updatedRecord?.appointment_datetime || updatedRecord?.slot_datetime || isoDate || rawDate || updated.appointment_datetime,
       };
@@ -382,6 +462,7 @@ export function App() {
       {/* Right Detail Drawer */}
       <BookingDrawer
         booking={selectedBooking}
+        techniciansList={techniciansList}
         onClose={() => setSelectedBooking(null)}
         onUpdateBooking={handleUpdateBooking}
         addToast={addToast}

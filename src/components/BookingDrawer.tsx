@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Booking } from '../types';
+import { Booking, Technician } from '../types';
 import { BRAND } from '../lib/branding';
 import {
   cleanDoctorName,
@@ -11,6 +11,9 @@ import {
   formatForDateTimeLocalInput,
   dateTimeLocalToISTISO,
   isAppointmentDateReached,
+  DEFAULT_TECHNICIANS,
+  DEFAULT_TECHNICIAN_MAP,
+  getTechnicianId,
 } from '../lib/dateUtils';
 import { triggerRescheduleWebhook, triggerNotifyWebhook } from '../lib/webhook';
 import { StatusBadge } from './StatusBadge';
@@ -23,10 +26,12 @@ import {
   Fan,
   CheckCircle2,
   Ban,
+  MapPin,
 } from 'lucide-react';
 
 interface BookingDrawerProps {
   booking: Booking | null;
+  techniciansList?: Technician[];
   onClose: () => void;
   onUpdateBooking: (updated: Partial<Booking> & { id: string }) => Promise<boolean>;
   addToast: (type: 'success' | 'error', message: string) => void;
@@ -34,26 +39,38 @@ interface BookingDrawerProps {
 
 export const BookingDrawer: React.FC<BookingDrawerProps> = ({
   booking,
+  techniciansList = DEFAULT_TECHNICIANS,
   onClose,
   onUpdateBooking,
   addToast,
 }) => {
   const [department, setDepartment] = useState('');
   const [doctor, setDoctor] = useState('');
+  const [technicianId, setTechnicianId] = useState<number>(1);
   const [slotDatetimeLocal, setSlotDatetimeLocal] = useState('');
   const [status, setStatus] = useState<string>('booked');
+  const [serviceAddress, setServiceAddress] = useState('');
   const [notes, setNotes] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
 
+  const availableTechs = techniciansList && techniciansList.length > 0 ? techniciansList : DEFAULT_TECHNICIANS;
+
   useEffect(() => {
     if (booking) {
       setDepartment(getServiceType(booking));
-      setDoctor(getTechnicianName(booking));
+      const currentTechName = getTechnicianName(booking);
+      setDoctor(currentTechName);
+      const initialTechId =
+        booking.technician_id !== undefined && booking.technician_id !== null
+          ? Number(booking.technician_id)
+          : getTechnicianId(currentTechName);
+      setTechnicianId(initialTechId);
       const slot = getSlotDatetime(booking);
       setSlotDatetimeLocal(formatForDateTimeLocalInput(slot));
       setStatus(booking.status || 'booked');
+      setServiceAddress(booking.service_address || (booking as any).address || '');
       setNotes(booking.notes || '');
     }
   }, [booking]);
@@ -87,14 +104,17 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
         return;
       }
 
-      // 1. Update Supabase
+      // 1. Update Supabase with technician_id and service_address
       const success = await onUpdateBooking({
         id: booking.id,
         department,
         service_type: department,
         service: department,
+        technician_id: technicianId,
         doctor: cleanedDoctor,
         technician: cleanedDoctor,
+        service_address: serviceAddress,
+        address: serviceAddress,
         slot_datetime: isoSlot,
         appointment_datetime: isoSlot,
         status,
@@ -230,6 +250,14 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
               </div>
             </div>
 
+            {/* Service Address Display */}
+            <div className="flex items-start gap-1.5 text-[12px] pt-1 border-t border-[#E7E5E4]/60">
+              <MapPin className="w-3.5 h-3.5 text-[#D97706] shrink-0 mt-0.5" />
+              <span className="text-[#1C1917] leading-snug break-words">
+                {serviceAddress || booking.service_address || (booking as any).address || 'No service address specified'}
+              </span>
+            </div>
+
             {/* Quick Status Bar inside drawer */}
             <div className="pt-2 border-t border-[#E7E5E4] flex items-center gap-2">
               <button
@@ -318,17 +346,41 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
               />
             </div>
 
+            {/* Service Address / Location */}
+            <div>
+              <label className="block text-[11px] text-[#78716C] mb-1">Service Address / Location</label>
+              <input
+                type="text"
+                value={serviceAddress}
+                onChange={(e) => setServiceAddress(e.target.value)}
+                placeholder="e.g. 45 Greenview Lane, South Hyderabad, Telangana"
+                className="w-full px-3 py-1.5 bg-white border border-[#E7E5E4] rounded-md text-[13px] text-[#1C1917] focus:outline-none focus:ring-1 focus:ring-[#0F172A]"
+              />
+            </div>
+
             {/* Technician */}
             <div>
               <label className="block text-[11px] text-[#78716C] mb-1">Assigned {BRAND.ownerLabel}</label>
-              <input
-                type="text"
-                value={doctor}
-                onChange={(e) => setDoctor(e.target.value)}
-                placeholder="e.g. Rajesh Kumar (Senior Tech)"
+              <select
+                value={technicianId}
+                onChange={(e) => {
+                  const selectedId = Number(e.target.value);
+                  setTechnicianId(selectedId);
+                  const found = availableTechs.find((t) => t.id === selectedId);
+                  if (found) {
+                    setDoctor(found.name);
+                  } else if (DEFAULT_TECHNICIAN_MAP[selectedId]) {
+                    setDoctor(DEFAULT_TECHNICIAN_MAP[selectedId]);
+                  }
+                }}
                 className="w-full px-3 py-1.5 bg-white border border-[#E7E5E4] rounded-md text-[13px] text-[#1C1917] focus:outline-none focus:ring-1 focus:ring-[#0F172A]"
-                required
-              />
+              >
+                {availableTechs.map((tech) => (
+                  <option key={tech.id} value={tech.id}>
+                    {tech.name} (Tech #{tech.id})
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Slot Datetime */}
